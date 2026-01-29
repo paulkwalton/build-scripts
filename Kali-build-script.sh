@@ -250,7 +250,18 @@ download_binaries() {
   wget -q -O /opt/pingcastle.zip \
     https://github.com/netwrix/pingcastle/releases/download/3.3.0.1/PingCastle_3.3.0.1.zip || true
 
-  curl -fsSL https://i.jpillora.com/chisel! | bash || true
+  # Download chisel directly from official GitHub releases (secure alternative to curl|bash)
+  echo "[*] Downloading chisel from official GitHub releases..."
+  wget -q -O /tmp/chisel.gz \
+    https://github.com/jpillora/chisel/releases/download/v1.10.1/chisel_1.10.1_linux_amd64.gz || true
+  if [ -f /tmp/chisel.gz ]; then
+    gunzip -f /tmp/chisel.gz 2>/dev/null || true
+    if [ -f /tmp/chisel ]; then
+      mv /tmp/chisel /usr/local/bin/chisel
+      chmod +x /usr/local/bin/chisel
+      echo "[*] Chisel installed to /usr/local/bin/chisel"
+    fi
+  fi
 }
 
 update_nuclei_templates() {
@@ -324,8 +335,7 @@ final_summary_and_warnings() {
   echo
   echo "========== BUILD SUMMARY =========="
   echo "Pentest user: ${PENTEST_USER}"
-  echo "Pentest password: ${PENTEST_PASS}"
-  echo "(Also saved at /root/pentest-credentials.txt, permissions 600)"
+  echo "Pentest credentials saved to: /root/pentest-credentials.txt (permissions 600)"
   echo "SSH: enabled and hardened (port 22)"
   echo "RDP: enabled via xrdp (port 3389)"
   echo "==================================="
@@ -333,6 +343,8 @@ final_summary_and_warnings() {
   echo "[!!!] IMPORTANT: Ensure the ROOT PASSWORD has been changed from any defaults."
   echo "      Run:  passwd root"
   echo "      (Never use default creds like root/root or root/kali.)"
+  echo
+  echo "[!!!] SECURITY: View pentest credentials with:  cat /root/pentest-credentials.txt"
   echo
 }
 
