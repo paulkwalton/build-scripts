@@ -1,0 +1,311 @@
+# Windows 11 Setup Script (Azure) - Non-Domain Joined
+# ------------------------------------------------------------
+# Order:
+#   1. Remove unwanted apps
+#   2. Install tooling
+#   3. Apply Windows 11 v25H2 Security Baseline (-Win11NonDomainJoined)
+#   4. Allow inbound RDP through firewall (after hardening)
+#
+# NOTE: The baseline ZIP no longer bundles LGPO.exe. LGPO.exe is now fetched only from the provided GitHub link. No other sources are attempted.
+# If download fails, manually download the Security Compliance Toolkit and place LGPO.exe into:
+#   <...>\Windows 11 v25H2 Security Baseline\Scripts\Tools\LGPO.exe
+
+function Remove-UnwantedApps {
+    Write-Host "`n[+] Removing unwanted Windows apps..." -ForegroundColor Cyan
+    $bloatwareApps = @(
+        "Microsoft.ZuneMusic","Microsoft.ZuneVideo","Microsoft.WindowsMaps",
+        "Microsoft.MicrosoftSolitaireCollection","Microsoft.BingWeather","Microsoft.WindowsAlarms",
+        "Microsoft.WindowsCamera","Microsoft.GetHelp","Microsoft.Getstarted",
+        "Microsoft.MicrosoftOfficeHub","Microsoft.Microsoft3DViewer","Microsoft.XboxApp",
+        "Microsoft.XboxGameOverlay","Microsoft.XboxGamingOverlay","Microsoft.XboxIdentityProvider",
+        "Microsoft.XboxSpeechToTextOverlay","Microsoft.MixedReality.Portal","Microsoft.People",
+        "Microsoft.SkypeApp","Microsoft.MicrosoftStickyNotes","Microsoft.YourPhone",
+        "Microsoft.OneConnect","Microsoft.Todos"
+    )
+    foreach ($app in $bloatwareApps) {
+        try {
+            # Add a verbose log to show which app is being processed
+            Write-Host "[*] Attempting to remove $app..." -ForegroundColor DarkCyan
+            
+            # Remove the app for all users
+            Get-AppxPackage -Name $app -AllUsers | Remove-AppxPackage -ErrorAction SilentlyContinue
+            # Remove the provisioned package
+            Get-AppxProvisionedPackage -Online | Where-Object DisplayName -EQ $app | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+            
+            Write-Host "[OK] Removed ${app}" -ForegroundColor Green
+        }
+        catch {
+            Write-Host "[X] Failed to remove ${app}: $($_.Exception.Message)" -ForegroundColor Red
+        }
+
+        # Add a small delay to reduce potential execution bottlenecks
+        Start-Sleep -Milliseconds 500
+    }
+    Write-Host "[+] Bloatware removal complete." -ForegroundColor Yellow
+}
+
+function Disable-IPv6 {
+    Write-Host "`n[+] Disabling IPv6 on all network adapters..." -ForegroundColor Cyan
+    try {
+        # Disable IPv6 via registry (preferred method for full stack)
+        $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters"
+        $name = "DisabledComponents"
+        $value = 0xFF
+        if (-not (Test-Path $regPath)) {
+            New-Item -Path $regPath -Force | Out-Null
+        }
+        Set-ItemProperty -Path $regPath -Name $name -Value $value -Type DWord
+        Write-Host "[OK] Set DisabledComponents registry value to 0xFF." -ForegroundColor Green
+
+        # Optionally, disable IPv6 on all adapters (may be redundant, registry covers all)
+        Get-NetAdapter | ForEach-Object {
+            try {
+                Disable-NetAdapterBinding -Name $_.Name -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue
+            } catch {
+                Write-Host "[!] Could not disable IPv6 on adapter $($_.Name): $($_.Exception.Message)" -ForegroundColor Yellow
+            }
+        }
+        Write-Host "[+] IPv6 disabling complete. A reboot may be required for changes to take full effect." -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "[X] Failed to disable IPv6: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+function Allow-RDP-InboundFirewall {
+    Write-Host "`n[+] Disabling Windows Firewall for all profiles..." -ForegroundColor Cyan
+    try {
+        # Disable Windows Firewall for Domain, Private, and Public profiles
+        Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled False -ErrorAction Stop
+        Write-Host "[OK] Windows Firewall disabled for all profiles." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "[X] Failed to disable Windows Firewall: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+function Install-WindowsSecurityBaselineNonDomainJoined {
+    param(
+        [string]$DownloadRoot = [IO.Path]::Combine($env:USERPROFILE, 'Downloads'),
+        [switch]$ForceRedownload
+    )
+    Write-Host "`n[+] Applying Windows 11 v25H2 Security Baseline (Non-Domain Joined)..." -ForegroundColor Cyan
+
+    $baselineZipUrl  = "https://download.microsoft.com/download/e99be2d2-e077-4986-a06b-6078051999dd/Windows%2011%20v25H2%20Security%20Baseline.zip"
+    $baselineZip     = Join-Path $DownloadRoot "Windows11_v25H2_Baseline.zip"
+    $extractPath     = Join-Path $DownloadRoot "Windows11_v25H2_Baseline_Extracted"
+
+    try {
+        if ($ForceRedownload -or -not (Test-Path $baselineZip)) {
+            Write-Host "[*] Downloading baseline ZIP..." -ForegroundColor DarkCyan
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $baselineZipUrl -OutFile $baselineZip -UseBasicParsing
+        } else {
+            Write-Host "[*] Baseline ZIP already present. (Use -ForceRedownload to fetch again.)" -ForegroundColor DarkCyan
+        }
+
+        Write-Host "[*] Extracting baseline to: $extractPath" -ForegroundColor DarkCyan
+        if (Test-Path $extractPath) { Remove-Item $extractPath -Recurse -Force }
+        Expand-Archive -Path $baselineZip -DestinationPath $extractPath
+
+        Write-Host "[*] Locating Baseline-LocalInstall.ps1..." -ForegroundColor DarkCyan
+        $baselineScript = Get-ChildItem -Path $extractPath -Filter "Baseline-LocalInstall.ps1" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $baselineScript) { throw "Baseline-LocalInstall.ps1 not found." }
+
+        $scriptsDir = $baselineScript.DirectoryName
+        Write-Host "[OK] Found baseline script at: $scriptsDir" -ForegroundColor Green
+
+        # Ensure Tools folder and LGPO.exe
+        $toolsDir = Join-Path $scriptsDir "Tools"
+        if (-not (Test-Path $toolsDir)) { New-Item -ItemType Directory -Path $toolsDir | Out-Null }
+        $lgpoExePath = Join-Path $toolsDir "LGPO.exe"
+
+        # --- AMENDED LOGIC: Always download LGPO.exe from the provided GitHub URL; do not try other sources ---
+        if (-not (Test-Path $lgpoExePath)) {
+            Write-Host "[*] LGPO.exe not present. Attempting to download from provided URL..." -ForegroundColor DarkCyan
+            $directLgpoUrl = "https://github.com/paulkwalton/thescriptvault/raw/refs/heads/main/build/LGPO.exe"
+            try {
+                Invoke-WebRequest -Uri $directLgpoUrl -OutFile $lgpoExePath -UseBasicParsing -ErrorAction Stop
+                if ((Test-Path $lgpoExePath) -and ((Get-Item $lgpoExePath).Length -gt 40KB)) {
+                    Write-Host "[OK] LGPO.exe acquired from provided URL." -ForegroundColor Green
+                } else {
+                    Write-Host "[X] LGPO.exe download failed or file too small." -ForegroundColor Red
+                    Write-Host "    Manual fix: Download Security Compliance Toolkit and place LGPO.exe in:" -ForegroundColor Red
+                    Write-Host "    $toolsDir" -ForegroundColor Red
+                    return
+                }
+            }
+            catch {
+                Write-Host "[X] LGPO.exe download from provided URL failed: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "    Manual fix: Download Security Compliance Toolkit and place LGPO.exe in:" -ForegroundColor Red
+                Write-Host "    $toolsDir" -ForegroundColor Red
+                return
+            }
+        } else {
+            Write-Host "[OK] LGPO.exe already present." -ForegroundColor Green
+        }
+        # --- End amended logic ---
+
+        Get-ChildItem -Path $scriptsDir -Recurse | Unblock-File -ErrorAction SilentlyContinue
+
+        Write-Host "[*] Executing baseline script with -Win11NonDomainJoined ..." -ForegroundColor DarkCyan
+        Push-Location $scriptsDir
+        try {
+            & $baselineScript.FullName -Win11NonDomainJoined -ErrorAction Stop
+            Write-Host "[OK] Baseline applied successfully." -ForegroundColor Green
+        }
+        catch {
+            Write-Host "[X] Baseline script failed: $($_.Exception.Message)" -ForegroundColor Red
+            if ($_.InvocationInfo) {
+                Write-Host "    At: $($_.InvocationInfo.PositionMessage)" -ForegroundColor DarkGray
+            }
+            Write-Host "    Confirm LGPO.exe is at: $lgpoExePath" -ForegroundColor Yellow
+            return
+        }
+        finally {
+            Pop-Location -ErrorAction SilentlyContinue
+        }
+
+        Write-Host "[+] Baseline application finished. Reboot is recommended." -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "[X] Unexpected failure: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+function Download-PentestTool {
+    $Urls = @(
+        # Sysinternals
+        "https://live.sysinternals.com/ADExplorer.exe",
+        "https://download.sysinternals.com/files/PSTools.zip",
+
+        # Portswigger Dependencies
+        "https://repo1.maven.org/maven2/org/python/jython-standalone/2.7.4/jython-standalone-2.7.4.jar",
+        "https://repo1.maven.org/maven2/org/jruby/jruby-complete/10.0.2.0/jruby-complete-10.0.2.0.jar",
+
+        # Portswigger Extensions
+        "https://portswigger.net/bappstore/bapps/download/444407b96d9c4de0adb7aed89e826122/5",      # 403 Bypasser
+        "https://portswigger.net/bappstore/bapps/download/f9bbac8c4acf4aefa4d7dc92a991af2f/27",      # Autorize
+        "https://portswigger.net/bappstore/bapps/download/f923cbf91698420890354c1d8958fee6/33",      # JSON Web Tokens
+        "https://portswigger.net/bappstore/bapps/download/c61cfa893bb14db4b01775554f7b802e/23",      # SAML Raider
+        "https://portswigger.net/bappstore/bapps/download/0ab7a94d8e11449daaf0fb387431225b/8",       # JS Miner
+        "https://portswigger.net/bappstore/bapps/download/ae62baff8fa24150991bad5eaf6d4d38/15",      # Software Version Reporter
+        "https://portswigger.net/bappstore/470b7057b86f41c396a97903377f3d81",                        # Logger++
+        "https://portswigger.net/bappstore/bapps/download/36238b534a78494db9bf2d03f112265c/13",      # Retire.JS
+
+        # Nessus Updates
+        "https://www.tenable.com/downloads/api/v2/pages/nessus/files/nessus-updates-10.9.4.tar.gz"
+    )
+
+    $toolsFolder = "C:\tools"
+    if (-not (Test-Path $toolsFolder)) {
+        Write-Host "[*] Creating $toolsFolder directory..." -ForegroundColor DarkCyan
+        New-Item -ItemType Directory -Path $toolsFolder | Out-Null
+    }
+
+    $jobs = @()
+    foreach ($url in $Urls) {
+        $fileName = Split-Path $url -Leaf
+        $destPath = Join-Path $toolsFolder $fileName
+        $jobs += Start-Job -ScriptBlock {
+            param($url, $destPath, $fileName)
+            try {
+                & curl.exe -L --fail --silent --show-error -o $destPath $url
+                if (Test-Path $destPath) {
+                    $item = Get-Item $destPath
+                    if ($item.Length -gt 0) {
+                        Write-Host "[OK] Downloaded $fileName." -ForegroundColor Green
+                    } else {
+                        Write-Host "[X] Download failed or file empty: $fileName" -ForegroundColor Red
+                    }
+                } else {
+                    Write-Host "[X] Download failed, file not found: $fileName" -ForegroundColor Red
+                }
+            } catch {
+                Write-Host "[X] Failed to download ${fileName}: $($_.Exception.Message)" -ForegroundColor Red
+            }
+        } -ArgumentList $url, $destPath, $fileName
+    }
+
+    Write-Host "[*] Waiting for all downloads to complete..." -ForegroundColor Cyan
+    $jobs | Wait-Job | Out-Null
+    $jobs | ForEach-Object { Receive-Job -Job $_; Remove-Job -Job $_ }
+}
+
+function Enable-AllRSATTools {
+    Write-Host "`n[+] Enabling all RSAT (Remote Server Administration Tools) features..." -ForegroundColor Cyan
+    try {
+        # Get all RSAT related capabilities
+        $rsatCapabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like 'Rsat.*' }
+        foreach ($cap in $rsatCapabilities) {
+            if ($cap.State -ne 'Installed') {
+                Write-Host "[*] Installing $($cap.Name)..." -ForegroundColor DarkCyan
+                try {
+                    Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop
+                    Write-Host "[OK] Installed $($cap.Name)." -ForegroundColor Green
+                } catch {
+                    Write-Host "[X] Failed to install $($cap.Name): $($_.Exception.Message)" -ForegroundColor Red
+                }
+            } else {
+                Write-Host "[OK] $($cap.Name) already installed." -ForegroundColor Green
+            }
+        }
+        Write-Host "[+] All RSAT tools enabled." -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "[X] Failed to enable RSAT tools: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+# -------------------------
+# Main Execution
+# -------------------------
+Remove-UnwantedApps
+
+# Set region to United Kingdom (GeoId: 244) for winget/msstore compatibility
+Set-WinHomeLocation -GeoId 244
+
+# Tooling Installation
+winget source update
+winget install -e --id Microsoft.WindowsTerminal --accept-package-agreements --accept-source-agreements
+winget install -e --id Iterate.Cyberduck --accept-package-agreements --accept-source-agreements
+winget install -e --id Tenable.Nessus --accept-package-agreements --accept-source-agreements
+winget install -e --id PortSwigger.BurpSuite.Professional --accept-package-agreements --accept-source-agreements
+winget install -e --id Insecure.Nmap --accept-package-agreements --accept-source-agreements
+winget install -e --id WiresharkFoundation.Wireshark --accept-package-agreements --accept-source-agreements
+winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
+winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements
+winget install -e --id=Microsoft.Sysinternals.Suite --accept-package-agreements --accept-source-agreements
+winget install -e --id Microsoft.AzureDataStudio --accept-package-agreements --accept-source-agreements
+winget install -e --id Microsoft.Azure.StorageExplorer --accept-package-agreements --accept-source-agreements
+winget install -e --id Microsoft.AzureCLI --accept-package-agreements --accept-source-agreements
+winget install -e --id Google.Chrome --accept-package-agreements --accept-source-agreements
+winget install -e --id Kubernetes.kubectl --accept-package-agreements --accept-source-agreements
+winget install -e --id Python.Python.3.14 --accept-package-agreements --accept-source-agreements
+winget install -e --id Bruno.Bruno --accept-package-agreements --accept-source-agreements
+winget install -e --id Microsoft.SQLServerManagementStudio --accept-package-agreements --accept-source-agreements
+winget install -e --id Microsoft.Azure.AZCopy.10 --accept-package-agreements --accept-source-agreements
+winget install -e --id Microsoft.OpenJDK.21 --accept-package-agreements --accept-source-agreements
+winget install -e --id Microsoft.Sysinternals.BGInfo --accept-package-agreements --accept-source-agreements
+winget install -e --id Putty.Putty --accept-package-agreements --accept-source-agreements
+winget install -e --id ElementLabs.LMStudio --accept-package-agreements --accept-source-agreements
+winget install -e --id OpenAI.Codex --accept-package-agreements --accept-source-agreements
+
+# Add exception to Windows Defender for C:\tools\ BEFORE downloading anything there
+Write-Host "`n[+] Adding Windows Defender exclusion for C:\tools\ ..." -ForegroundColor Cyan
+try {
+    Add-MpPreference -ExclusionPath "C:\tools"
+    Write-Host "[OK] Windows Defender exclusion added for C:\tools\" -ForegroundColor Green
+} catch {
+    Write-Host "[X] Failed to add Windows Defender exclusion: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Download-PentestTool
+# Apply baseline hardening LAST (will reboot). Commented out as it stops RDP from working.
+# Install-WindowsSecurityBaselineNonDomainJoined
+
+# Re-enable inbound RDP through firewall after hardening
+Allow-RDP-InboundFirewall
+"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd"
+Write-Host "`n[+] Script finished. Reboot recommended if baseline just applied." -ForegroundColor Yellow
+
