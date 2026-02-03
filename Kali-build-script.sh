@@ -19,6 +19,36 @@ require_root() {
   fi
 }
 
+github_latest_asset_url() {
+  local repo="$1"
+  local pattern="$2"
+  local api="https://api.github.com/repos/${repo}/releases/latest"
+
+  if ! command -v curl >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+    return 1
+  fi
+
+  curl -fsSL "$api" | jq -r '.assets[].browser_download_url' | grep -E -m 1 "$pattern"
+}
+
+download_github_asset() {
+  local repo="$1"
+  local pattern="$2"
+  local dest="$3"
+  local fallback="$4"
+  local url=""
+
+  url="$(github_latest_asset_url "$repo" "$pattern")" || true
+  if [ -z "$url" ]; then
+    url="$fallback"
+    echo "[!] GitHub latest lookup failed for ${repo}; using pinned URL"
+  else
+    echo "[*] Using latest GitHub release for ${repo}"
+  fi
+
+  wget -q -O "$dest" "$url" || true
+}
+
 import_kali_key() {
   echo "[*] Importing Kali archive signing key..."
   if command -v apt-key >/dev/null 2>&1; then
@@ -238,22 +268,37 @@ download_binaries() {
     https://download.sysinternals.com/files/Procdump.zip || true
   wget -q -O /opt/icspasswords/scada.csv \
     https://raw.githubusercontent.com/ITI/ICS-Security-Tools/f829a32f98fadfa5206d3a41fc3612dd4741c8b3/configurations/passwords/scadapass.csv || true
-  wget -q -O /opt/network/kerbrute-linux-64 \
-    https://github.com/ropnop/kerbrute/releases/download/v1.0.3/kerbrute_linux_amd64 || true
+  download_github_asset \
+    "ropnop/kerbrute" \
+    "kerbrute_linux_amd64$" \
+    "/opt/network/kerbrute-linux-64" \
+    "https://github.com/ropnop/kerbrute/releases/download/v1.0.3/kerbrute_linux_amd64"
   chmod +x /opt/network/kerbrute-linux-64 || true
-  wget -q -O /opt/adtools/windapsearch \
-    https://github.com/ropnop/go-windapsearch/releases/download/v0.3.0/windapsearch-linux-amd64 || true
+  download_github_asset \
+    "ropnop/go-windapsearch" \
+    "windapsearch-linux-amd64$" \
+    "/opt/adtools/windapsearch" \
+    "https://github.com/ropnop/go-windapsearch/releases/download/v0.3.0/windapsearch-linux-amd64"
   chmod +x /opt/adtools/windapsearch || true
-  wget -q -O /opt/ruler-linux64 \
-    https://github.com/sensepost/ruler/releases/download/2.4.1/ruler-linux64 || true
+  download_github_asset \
+    "sensepost/ruler" \
+    "ruler-linux64$" \
+    "/opt/ruler-linux64" \
+    "https://github.com/sensepost/ruler/releases/download/2.4.1/ruler-linux64"
   chmod +x /opt/ruler-linux64 || true
-  wget -q -O /opt/pingcastle.zip \
-    https://github.com/netwrix/pingcastle/releases/download/3.3.0.1/PingCastle_3.3.0.1.zip || true
+  download_github_asset \
+    "netwrix/pingcastle" \
+    "PingCastle_.*\\.zip$" \
+    "/opt/pingcastle.zip" \
+    "https://github.com/netwrix/pingcastle/releases/download/3.3.0.1/PingCastle_3.3.0.1.zip"
 
   # Download chisel directly from official GitHub releases (secure alternative to curl|bash)
   echo "[*] Downloading chisel from official GitHub releases..."
-  wget -q -O /tmp/chisel.gz \
-    https://github.com/jpillora/chisel/releases/download/v1.10.1/chisel_1.10.1_linux_amd64.gz || true
+  download_github_asset \
+    "jpillora/chisel" \
+    "chisel_.*_linux_amd64\\.gz$" \
+    "/tmp/chisel.gz" \
+    "https://github.com/jpillora/chisel/releases/download/v1.10.1/chisel_1.10.1_linux_amd64.gz"
   if [ -f /tmp/chisel.gz ]; then
     gunzip -f /tmp/chisel.gz 2>/dev/null || true
     if [ -f /tmp/chisel ]; then
