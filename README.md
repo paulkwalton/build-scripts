@@ -2,6 +2,9 @@
 
 Automated build scripts for provisioning penetration testing workstations on Kali Linux and Windows 11.
 
+**Version:** Unreleased
+**Last updated:** 2026-02-04
+
 ## Overview
 
 This repository contains two automated build scripts designed to rapidly deploy and configure penetration testing environments:
@@ -59,9 +62,9 @@ sudo ./Kali-build-script.sh --full
 Includes everything from minimal/default plus:
 - System hardening (fail2ban, unattended-upgrades)
 - Extensive tool installation via apt
-- Python tools via pipx (certipy-ad, sublist3r, dirsearch, eyewitness, mitm6, hashid, spray)
-- Git repository cloning to `/opt` (LinEnum, PEASS-ng, WES-NG, JuicyPotato, PrintSpoofer, Donut, KeeThief, Kekeo, LAPSToolkit, krbrelayx, kerbrute, Coercer, SharpHound, hoaxshell, GraphRunner)
-- Binary downloads (Sysinternals Procdump, kerbrute, windapsearch, ruler, PingCastle, chisel)
+- Python tools via pipx (certipy-ad, sublist3r, dirsearch, eyewitness, mitm6, hashid, spray) and pip (`pyftpdlib`, `Cython`, `pysmb`)
+- Git repository cloning to `/opt` (LinEnum, PEASS-ng, WES-NG, RemotePotato0, JuicyPotato, PrintSpoofer, Donut, psgetsystem, Invoke-Obfuscation, GodPotato, KeeThief, Kekeo, LAPSToolkit, krbrelayx, kerbrute, Coercer, ICS-Security-Tools, SharpHound, hoaxshell, GraphRunner)
+- Binary/downloaded assets (Sysinternals Procdump, kerbrute, windapsearch, ruler, PingCastle, chisel, SCADA password list)
 - SSH key rotation
 - Nuclei template updates
 - PostgreSQL service enablement
@@ -70,19 +73,23 @@ Includes everything from minimal/default plus:
 ### Tools Installed (Full Mode)
 
 **Core Packages:**
-- curl, wget, ca-certificates, git, jq, build-essential
+- curl, wget, ca-certificates, git, jq, build-essential, macchanger
 - python3, python3-pip, python3-venv, python3-impacket
-- netcat-traditional, sqlmap, gobuster, dirb, nikto, nuclei
-- metasploit-framework, tcpdump, smbclient, enum4linux
-- responder, yersinia, seclists, ligolo-ng
+- netcat-traditional, sqlmap, gobuster, dirb, nikto, nuclei, dnsrecon
+- metasploit-framework, tcpdump, smbclient, enum4linux, responder, yersinia, seclists, ligolo-ng
+- iputils-ping, net-tools, snapd, prips, rdesktop, sqlitebrowser, sshpass, powershell, nano
+- postgresql
 
 **Optional Packages (best-effort):**
 - default-jdk, tilix, novnc, default-mysql-client
-- auditd, audispd-plugins, filezilla, winetricks
+- auditd, audispd-plugins, filezilla, winetricks, libpcap-dev
 - wireguard, awscli, lldpd
 
 **Pipx Tools:**
 - certipy-ad, sublist3r, dirsearch, spray, eyewitness, mitm6, hashid
+
+**Pip Packages:**
+- pyftpdlib, Cython, pysmb
 
 ### Interactive Mode
 
@@ -105,7 +112,7 @@ You'll be prompted to select:
 
 - **SSH Hardening**: Prohibits root login with password, enables pubkey authentication, sets client alive intervals
 - **Fail2ban**: Configured for SSH with progressive ban times
-- **Service Disabling**: Stops unnecessary services (bluetooth, avahi, cups, dhcp, nfs, bind9, vsftpd, dovecot, smbd, squid, snmpd)
+- **Service Disabling**: Stops unnecessary services (bluetooth, avahi, cups, isc-dhcp-server/isc-dhcp-server6, slapd, nfs-server, bind9, vsftpd, dovecot, smbd, squid, snmpd)
 - **Unattended Upgrades**: Automatic security updates
 - **SSH Key Rotation**: Removes default SSH host keys and generates new ones
 - **Secure Password Generation**: Uses OpenSSL for cryptographically secure passwords
@@ -215,12 +222,12 @@ The script executes automatically and performs all configured tasks sequentially
 
 ### Security Baseline
 
-The script includes commented-out code for applying the Windows 11 v25H2 Security Baseline (Non-Domain Joined). This is disabled by default as it may interfere with RDP functionality.
+The script includes commented-out code for applying the Windows 11 v25H2 Security Baseline (Non-Domain Joined). This is disabled by default as it may interfere with RDP functionality. The baseline ZIP is downloaded from Microsoft; LGPO.exe is fetched from the configured GitHub URL only.
 
 To enable:
-1. Uncomment line 305: `# Install-WindowsSecurityBaselineNonDomainJoined`
+1. Uncomment the line that calls `Install-WindowsSecurityBaselineNonDomainJoined`
 2. The baseline will be applied with `-Win11NonDomainJoined` flag
-3. LGPO.exe is automatically downloaded from the configured GitHub source
+3. LGPO.exe is automatically downloaded from the configured GitHub source (the baseline ZIP no longer bundles LGPO.exe)
 4. Reboot required after baseline application
 
 ### Network Configuration
@@ -303,7 +310,8 @@ To enable:
 - **Solution**: Run `winget source reset --force` as Administrator
 
 **Issue**: LGPO.exe download fails
-- **Solution**: Manually download Security Compliance Toolkit from Microsoft and place LGPO.exe in the Tools folder
+- **Solution**: Manually download the Security Compliance Toolkit from Microsoft and place LGPO.exe at:
+  `Windows 11 v25H2 Security Baseline\Scripts\Tools\LGPO.exe`
 
 **Issue**: Burp extensions fail to download
 - **Solution**: Manually download from PortSwigger BApp Store
