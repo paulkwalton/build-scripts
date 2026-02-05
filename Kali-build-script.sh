@@ -144,6 +144,13 @@ EOF
 # User provisioning
 # =========================================
 
+# =========================================
+# Burp Suite Professional configuration
+# =========================================
+BURP_PRO_VERSION="2025.12.5"
+BURP_PRO_INSTALL_DIR="/opt/BurpSuitePro"
+SKIP_BURP_PRO=""
+
 PENTEST_USER="pentest"
 PENTEST_PASS=""
 
@@ -309,6 +316,86 @@ download_binaries() {
   fi
 }
 
+install_burpsuite_pro() {
+  if [[ -n "$SKIP_BURP_PRO" ]]; then
+    echo "[*] Skipping Burp Suite Professional install (--skip-burp-pro)"
+    return 0
+  fi
+
+  echo "[*] Installing Burp Suite Professional ${BURP_PRO_VERSION}..."
+
+  # Check if already installed
+  if [[ -x "${BURP_PRO_INSTALL_DIR}/BurpSuitePro" ]]; then
+    echo "[*] Burp Suite Professional already installed at ${BURP_PRO_INSTALL_DIR}"
+    return 0
+  fi
+
+  # Detect architecture
+  local arch
+  arch="$(uname -m)"
+  local download_type=""
+  case "$arch" in
+    x86_64)  download_type="Linux" ;;
+    aarch64) download_type="LinuxArm64" ;;
+    *)
+      echo "[!] Unsupported architecture for Burp Suite Pro: ${arch}"
+      return 1
+      ;;
+  esac
+
+  local installer="/tmp/burpsuite_pro_installer.sh"
+  local varfile="/tmp/burp_response.varfile"
+  local download_url="https://portswigger.net/burp/releases/startdownload?product=pro&version=${BURP_PRO_VERSION}&type=${download_type}"
+
+  # Download installer
+  echo "[*] Downloading Burp Suite Professional installer (${download_type})..."
+  wget -q --show-progress -O "$installer" "$download_url" || {
+    echo "[!] Failed to download Burp Suite Professional installer"
+    rm -f "$installer"
+    return 1
+  }
+
+  # Verify we got an actual installer (should be >50MB, not an error page)
+  local file_size
+  file_size="$(stat -c%s "$installer" 2>/dev/null || stat -f%z "$installer" 2>/dev/null || echo 0)"
+  if [[ "$file_size" -lt 52428800 ]]; then
+    echo "[!] Downloaded file too small (${file_size} bytes) — expected >50MB installer"
+    rm -f "$installer"
+    return 1
+  fi
+
+  chmod +x "$installer"
+
+  # Create install4j response varfile for silent installation
+  cat > "$varfile" <<EOF
+sys.adminRights\$Boolean=true
+sys.installationDir=${BURP_PRO_INSTALL_DIR}
+sys.languageId=en
+EOF
+
+  # Run silent installer
+  echo "[*] Running Burp Suite Professional silent installer..."
+  "$installer" -q -varfile "$varfile" || {
+    echo "[!] Burp Suite Professional installer failed"
+    rm -f "$installer" "$varfile"
+    return 1
+  }
+
+  # Clean up temp files
+  rm -f "$installer" "$varfile"
+
+  # Verify installation
+  if [[ -x "${BURP_PRO_INSTALL_DIR}/BurpSuitePro" ]]; then
+    echo "[*] Burp Suite Professional installed successfully to ${BURP_PRO_INSTALL_DIR}"
+    # Create symlink for PATH access
+    ln -sf "${BURP_PRO_INSTALL_DIR}/BurpSuitePro" /usr/local/bin/burpsuite-pro
+    echo "[*] Symlink created: /usr/local/bin/burpsuite-pro"
+  else
+    echo "[!] Burp Suite Professional binary not found after installation"
+    return 1
+  fi
+}
+
 update_nuclei_templates() {
   echo "[*] Updating Nuclei templates..."
   if command -v nuclei >/dev/null 2>&1; then
@@ -424,6 +511,7 @@ full_install() {
   prepare_opt_tree
   clone_repos
   download_binaries
+  install_burpsuite_pro || true
   update_nuclei_templates
   rotate_ssh_keys
   enable_ssh
@@ -439,11 +527,12 @@ CHOICE=""
 
 usage() {
   cat <<EOF
-Usage: $0 [--minimal|--default|--full]
+Usage: $0 [--minimal|--default|--full] [--skip-burp-pro]
 If no install flag is provided, an interactive menu will appear.
   --minimal        Minimal Kali (kali-linux-core) + SSH + RDP + PATH normalisation
   --default        Default Kali (kali-linux-default) + SSH + RDP + PATH normalisation
   --full           Full build (hardening, tools, repos, Nuclei, PostgreSQL, SSH, RDP)
+  --skip-burp-pro  Skip Burp Suite Professional download and installation
 EOF
 }
 
@@ -451,6 +540,7 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --minimal|--default|--full) CHOICE="${1#--}"; shift ;;
+      --skip-burp-pro) SKIP_BURP_PRO=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) echo "Unknown option: $1"; usage; exit 1 ;;
     esac
