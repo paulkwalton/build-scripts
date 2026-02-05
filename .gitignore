@@ -1,0 +1,143 @@
+# =========================================
+# Secrets & Credentials
+# =========================================
+*.env
+.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.crt
+*.cer
+*.der
+*.pub
+id_rsa*
+id_ed25519*
+id_ecdsa*
+id_dsa*
+*.gpg
+*.asc
+credentials*
+secrets*
+*secret*
+*token*
+*.credential
+service-account*.json
+*-credentials.json
+*_credentials.json
+kubeconfig
+.kube/config
+.aws/
+.azure/
+.gcp/
+
+# =========================================
+# API Keys & Config Files
+# =========================================
+*.tfvars
+*.auto.tfvars
+terraform.tfstate
+terraform.tfstate.backup
+.terraform/
+vault-token
+.vault-token
+*.hcl
+
+# =========================================
+# SSH & Remote Access
+# =========================================
+known_hosts
+authorized_keys
+*.ppk
+ssh_config
+sshd_config
+
+# =========================================
+# Password & Hash Files
+# =========================================
+*.hash
+*.hashes
+*.pot
+*.passwd
+shadow
+passwd
+htpasswd
+*.htpasswd
+
+# =========================================
+# Database Files
+# =========================================
+*.sql
+*.sqlite
+*.sqlite3
+*.db
+*.mdb
+*.accdb
+
+# =========================================
+# Log Files
+# =========================================
+*.log
+*.log.*
+transcript-*.txt
+
+# =========================================
+# OS & Editor Files
+# =========================================
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-*
+.project
+.settings/
+
+# =========================================
+# Build & Runtime Artifacts
+# =========================================
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+.npm/
+*.class
+*.jar
+*.war
+*.ear
+target/
+dist/
+build/
+out/
+bin/
+obj/
+
+# =========================================
+# Package Manager Locks (optional)
+# =========================================
+# Uncomment if not tracking lock files
+# package-lock.json
+# yarn.lock
+# Pipfile.lock
+
+# =========================================
+# Docker
+# =========================================
+.docker/
+docker-compose.override.yml
+
+# =========================================
+# Temporary & Backup Files
+# =========================================
+*.tmp
+*.temp
+*.bak
+*.backup
+*.orig
+*.old
+/tmp/
