@@ -52,9 +52,9 @@ $script:LgpoExpectedHash = "C17690302A72FA2B48D31F7BC57B75A73C391F633BE1E9F2BB92
 $script:WingetPackages = @(
     @{ Id = "Microsoft.WindowsTerminal";          Version = "1.23.20211.0" }
     @{ Id = "Iterate.Cyberduck";                   Version = "9.3.1.44136" }
-    @{ Id = "Tenable.Nessus";                      Version = "10.11.1.20021" }
+    @{ Id = "Tenable.Nessus";                      Version = "10.11.3.20047" }
     @{ Id = "PortSwigger.BurpSuite.Professional";  Version = "2025.12.4" }
-    @{ Id = "Insecure.Nmap";                       Version = "7.80" }
+    @{ Id = "Insecure.Nmap";                       Version = "" }  # Unpinned: v7.80 download returns 403, use latest
     @{ Id = "WiresharkFoundation.Wireshark";       Version = "4.6.3" }
     @{ Id = "Docker.DockerDesktop";                Version = "4.59.0" }
     @{ Id = "Git.Git";                             Version = "2.53.0" }
@@ -66,11 +66,11 @@ $script:WingetPackages = @(
     @{ Id = "Kubernetes.kubectl";                  Version = "1.35.0" }
     @{ Id = "Python.Python.3.14";                  Version = "3.14.2" }
     @{ Id = "Bruno.Bruno";                         Version = "3.0.2" }
-    @{ Id = "Microsoft.SQLServerManagementStudio"; Version = "20.2.1" }
+    @{ Id = "Microsoft.SQLServerManagementStudio.22"; Version = "22.4.1" }
     @{ Id = "Microsoft.Azure.AZCopy.10";           Version = "10.32.0" }
-    @{ Id = "Microsoft.OpenJDK.21";                Version = "21.0.10.7" }
+    @{ Id = "Microsoft.OpenJDK.21";                Version = "" }  # Unpinned: installer error 1601 with pinned version, use latest
     @{ Id = "Microsoft.Sysinternals.BGInfo";       Version = "4.33" }
-    @{ Id = "PuTTY.PuTTY";                        Version = "0.83.0.0" }
+    @{ Id = "PuTTY.PuTTY";                        Version = "" }  # Unpinned: cache errors with pinned version
     @{ Id = "ElementLabs.LMStudio";               Version = "0.3.39" }
     @{ Id = "OpenAI.Codex";                        Version = "0.95.0" }
 )
@@ -387,7 +387,15 @@ function Enable-AllRSATTools {
 function Install-WingetPackages {
     Write-Host "`n[+] Installing packages via winget..." -ForegroundColor Cyan
 
-    $sourceUpdateProcess = Start-Process -FilePath 'winget' -ArgumentList @('source', 'update') -Wait -PassThru -NoNewWindow
+    # Reset and update winget sources to avoid stale source errors (-1978335157)
+    Write-Host "[*] Resetting winget sources..." -ForegroundColor DarkCyan
+    $resetProcess = Start-Process -FilePath 'winget' -ArgumentList @('source', 'reset', '--force', '--accept-source-agreements') -Wait -PassThru -NoNewWindow
+    if ($resetProcess.ExitCode -ne 0) {
+        Write-Host "[!] winget source reset returned exit code $($resetProcess.ExitCode)." -ForegroundColor Yellow
+    }
+
+    Write-Host "[*] Updating winget sources..." -ForegroundColor DarkCyan
+    $sourceUpdateProcess = Start-Process -FilePath 'winget' -ArgumentList @('source', 'update', '--accept-source-agreements') -Wait -PassThru -NoNewWindow
     if ($sourceUpdateProcess.ExitCode -ne 0) {
         Write-Host "[!] winget source update returned exit code $($sourceUpdateProcess.ExitCode)." -ForegroundColor Yellow
     }
