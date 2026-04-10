@@ -58,7 +58,9 @@ $script:WingetPackages = @(
     @{ Id = "WiresharkFoundation.Wireshark";       Version = "4.6.3" }
     @{ Id = "Docker.DockerDesktop";                Version = "4.59.0" }
     @{ Id = "Git.Git";                             Version = "2.53.0" }
-    @{ Id = "Microsoft.Sysinternals.Suite";        Version = "" }  # Unpinned: single version in manifest, hash changes frequently
+    # Microsoft.Sysinternals.Suite removed from winget — it's a ZIP, not an installer,
+    # and winget's install step fails on ARM64 (exit -1978335215). Handled by
+    # Install-SysinternalsSuite instead (direct download to C:\tools\Sysinternals\).
     @{ Id = "Microsoft.Azure.DataStudio";          Version = "1.52.0" }
     @{ Id = "Microsoft.Azure.StorageExplorer";     Version = "1.41.0" }
     @{ Id = "Microsoft.AzureCLI";                  Version = "2.83.0" }
@@ -71,7 +73,7 @@ $script:WingetPackages = @(
     @{ Id = "Microsoft.OpenJDK.21";                Version = "" }  # Unpinned: installer error 1601 with pinned version, use latest
     @{ Id = "Microsoft.Sysinternals.BGInfo";       Version = "4.33" }
     @{ Id = "PuTTY.PuTTY";                        Version = "" }  # Unpinned: cache errors with pinned version
-    @{ Id = "ElementLabs.LMStudio";               Version = "0.3.39" }
+    # ElementLabs.LMStudio removed — not needed for pentest workflow and ARM64 installer fails
     @{ Id = "OpenAI.Codex";                        Version = "0.95.0" }
 )
 
@@ -348,6 +350,54 @@ function Download-PentestTool {
     Write-Host "[+] Downloads complete." -ForegroundColor Yellow
 }
 
+function Install-SysinternalsSuite {
+    Write-Host "`n[+] Installing Sysinternals Suite (direct download)..." -ForegroundColor Cyan
+
+    $toolsFolder = "C:\tools"
+    $destFolder  = Join-Path $toolsFolder "Sysinternals"
+    $zipPath     = Join-Path $toolsFolder "SysinternalsSuite.zip"
+
+    # Detect architecture and pick the correct ZIP. ARM64 has its own download;
+    # x64/AMD64 uses the default one.
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if ($arch -eq 'ARM64') {
+        $zipUrl = "https://download.sysinternals.com/files/SysinternalsSuite-ARM64.zip"
+    } else {
+        $zipUrl = "https://download.sysinternals.com/files/SysinternalsSuite.zip"
+    }
+
+    try {
+        if (-not (Test-Path $toolsFolder)) {
+            New-Item -ItemType Directory -Path $toolsFolder -Force | Out-Null
+        }
+
+        Write-Host "[*] Downloading $zipUrl ..." -ForegroundColor DarkCyan
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath -UseBasicParsing -ErrorAction Stop
+
+        if (-not (Test-Path $zipPath) -or ((Get-Item $zipPath).Length -lt 1MB)) {
+            throw "Downloaded file missing or too small."
+        }
+
+        Write-Host "[*] Extracting to $destFolder ..." -ForegroundColor DarkCyan
+        if (Test-Path $destFolder) {
+            Remove-Item $destFolder -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Expand-Archive -Path $zipPath -DestinationPath $destFolder -Force -ErrorAction Stop
+
+        # Remove the ZIP once extracted
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+
+        $exeCount = (Get-ChildItem -Path $destFolder -Filter '*.exe' -File -ErrorAction SilentlyContinue | Measure-Object).Count
+        Write-Host "[OK] Sysinternals Suite installed to $destFolder ($exeCount executables, arch=$arch)." -ForegroundColor Green
+        Add-BuildResult -Category 'Sysinternals' -Item 'Sysinternals Suite' -Status 'Success' -Detail "$exeCount tools, $arch"
+    }
+    catch {
+        Write-Host "[X] Failed to install Sysinternals Suite: $($_.Exception.Message)" -ForegroundColor Red
+        Add-BuildResult -Category 'Sysinternals' -Item 'Sysinternals Suite' -Status 'Failed' -Detail $_.Exception.Message
+    }
+}
+
 function Enable-AllRSATTools {
     Write-Host "`n[+] Enabling all RSAT (Remote Server Administration Tools) features..." -ForegroundColor Cyan
     try {
@@ -561,6 +611,9 @@ try {
 
     # Pentest tool downloads
     Download-PentestTool
+
+    # Sysinternals Suite (direct download — replaces broken winget install)
+    Install-SysinternalsSuite
 
     # RSAT tools
     if (-not $SkipRSAT) {
