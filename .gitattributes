@@ -1,0 +1,15 @@
+# Enforce LF line endings for all shell scripts. Without this, a git clone on
+# a Windows machine with core.autocrlf=true can convert shebangs to CRLF,
+# which then fail inside a Linux guest with:
+#     /bin/bash^M: bad interpreter: No such file or directory
+# The test harness copies these scripts verbatim into a Kali VM and executes
+# them, so LF is mandatory.
+*.sh text eol=lf
+
+# Same rationale for the Windows .cmd wrapper (harness.sh generates it on
+# the fly, but if any *.cmd files are ever checked in, keep them CRLF which
+# is what Windows expects).
+*.cmd text eol=crlf
+
+# PowerShell works with either but CRLF is the native Windows convention.
+*.ps1 text eol=crlf

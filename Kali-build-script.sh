@@ -9,6 +9,47 @@ export DEBIAN_FRONTEND=noninteractive
 # =========================================
 
 # =========================================
+# Build-result tracking
+# =========================================
+# BUILD_RESULTS is a flat pipe-delimited array: "Category|Item|Status|Detail"
+# add_build_result appends one entry. track_step runs a named function with
+# set -e locally disabled, captures the exit code, and records Success/Failed.
+# final_summary_and_warnings (below) iterates this array to emit a machine-
+# parseable summary compatible with the harness's lib/report.sh parser.
+declare -a BUILD_RESULTS=()
+
+add_build_result() {
+  # $1=category, $2=item, $3=status (Success|Failed|Skipped), $4=detail
+  BUILD_RESULTS+=("$1|$2|$3|$4")
+}
+
+track_step() {
+  # $1=human description, $2=function name to call, $3=category (default "Step")
+  local desc="$1" func="$2" cat="${3:-Step}"
+  echo "[*] ${desc}..."
+  # Locally disable set -e so a single step failure doesn't abort the script.
+  # We want the harness to see every step's result, not just the first failure.
+  set +e
+  "$func"
+  local rc=$?
+  set -e
+  if [[ $rc -eq 0 ]]; then
+    echo "[OK] ${desc}"
+    add_build_result "$cat" "$desc" "Success" ""
+  else
+    echo "[X] ${desc} failed (exit $rc)"
+    add_build_result "$cat" "$desc" "Failed" "exit $rc"
+  fi
+  # Always return 0 so the caller's set -e doesn't abort — we track failures
+  # in BUILD_RESULTS and the script exits non-zero at the end of main().
+  return 0
+}
+
+# Thin wrappers around inline apt commands so track_step can call them by name.
+_install_kali_core_meta()    { apt install -y kali-linux-core; }
+_install_kali_default_meta() { apt install -y kali-linux-default; }
+
+# =========================================
 # Utility
 # =========================================
 
@@ -465,12 +506,71 @@ cleanup_and_info() {
 
 final_summary_and_warnings() {
   echo
-  echo "========== BUILD SUMMARY =========="
+  echo "========================================"
+  echo "           BUILD SUMMARY"
+  echo "========================================"
+  echo "Timestamp : $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "Hostname  : $(hostname)"
+  echo "========================================"
+
+  # Group BUILD_RESULTS by category while preserving insertion order within
+  # each category. We iterate twice: first to collect unique categories in
+  # order, then to emit the entries for each category.
+  local -a categories=()
+  local entry cat
+  for entry in "${BUILD_RESULTS[@]:-}"; do
+    [[ -z "$entry" ]] && continue
+    cat="${entry%%|*}"
+    local already=0
+    local c
+    for c in "${categories[@]:-}"; do
+      if [[ "$c" == "$cat" ]]; then already=1; break; fi
+    done
+    if (( ! already )); then categories+=("$cat"); fi
+  done
+
+  local success=0 failed=0 skipped=0 total=0
+  for cat in "${categories[@]:-}"; do
+    [[ -z "$cat" ]] && continue
+    echo
+    echo "--- ${cat} ---"
+    for entry in "${BUILD_RESULTS[@]:-}"; do
+      [[ -z "$entry" ]] && continue
+      local e_cat="${entry%%|*}"
+      if [[ "$e_cat" != "$cat" ]]; then continue; fi
+      # Split the remainder on '|'
+      local rest="${entry#*|}"
+      local item="${rest%%|*}"
+      rest="${rest#*|}"
+      local status="${rest%%|*}"
+      local detail="${rest#*|}"
+      local line="  [${status}] ${item}"
+      if [[ -n "$detail" ]]; then line+=" - ${detail}"; fi
+      echo "$line"
+      # Use $(( x + 1 )) instead of (( x++ )) because post-increment
+      # evaluates to the OLD value. When x=0, (( x++ )) returns 0 which
+      # is falsy in bash arithmetic — and set -e would kill the script.
+      case "$status" in
+        Success) success=$(( success + 1 )) ;;
+        Failed)  failed=$(( failed + 1 ))   ;;
+        Skipped) skipped=$(( skipped + 1 )) ;;
+      esac
+      total=$(( total + 1 ))
+    done
+  done
+
+  echo
+  echo "========================================"
+  echo "  ${success} succeeded, ${failed} failed, ${skipped} skipped (of ${total} total)"
+  echo "========================================"
+  echo
+
+  # Preserve the original human-readable warnings block so direct users of
+  # this script (without the harness) still see the reminders.
   echo "Pentest user: ${PENTEST_USER}"
   echo "Pentest credentials saved to: /root/pentest-credentials.txt (permissions 600)"
   echo "SSH: enabled and hardened (port 22)"
   echo "RDP: enabled via xrdp (port 3389)"
-  echo "==================================="
   echo
   echo "[!!!] IMPORTANT: Ensure the ROOT PASSWORD has been changed from any defaults."
   echo "      Run:  passwd root"
@@ -478,6 +578,9 @@ final_summary_and_warnings() {
   echo
   echo "[!!!] SECURITY: View pentest credentials with:  cat /root/pentest-credentials.txt"
   echo
+
+  # Expose the failure count so main() can decide the exit code.
+  BUILD_FAILURE_COUNT=$failed
 }
 
 # =========================================
@@ -485,38 +588,36 @@ final_summary_and_warnings() {
 # =========================================
 
 install_kali_minimal() {
-  update_system
-  echo "[*] Installing Kali minimal (kali-linux-core)..."
-  apt install -y kali-linux-core
-  normalise_paths
-  enable_ssh
-  enable_rdp
+  track_step "Update system"                     update_system            "System"
+  track_step "Install Kali core metapackage"     _install_kali_core_meta  "Packages"
+  track_step "Normalise PATH"                    normalise_paths          "System"
+  track_step "Enable and harden SSH"             enable_ssh               "Services"
+  track_step "Enable RDP (xrdp)"                 enable_rdp               "Services"
 }
 
 install_kali_default() {
-  update_system
-  echo "[*] Installing Kali default (kali-linux-default)..."
-  apt install -y kali-linux-default
-  normalise_paths
-  enable_ssh
-  enable_rdp
+  track_step "Update system"                     update_system               "System"
+  track_step "Install Kali default metapackage"  _install_kali_default_meta  "Packages"
+  track_step "Normalise PATH"                    normalise_paths             "System"
+  track_step "Enable and harden SSH"             enable_ssh                  "Services"
+  track_step "Enable RDP (xrdp)"                 enable_rdp                  "Services"
 }
 
 full_install() {
-  update_system
-  harden_kali
-  install_base_tools
-  install_pipx_and_tools
-  normalise_paths
-  prepare_opt_tree
-  clone_repos
-  download_binaries
-  install_burpsuite_pro || true
-  update_nuclei_templates
-  rotate_ssh_keys
-  enable_ssh
-  enable_rdp
-  cleanup_and_info
+  track_step "Update system"                     update_system            "System"
+  track_step "Harden Kali (fail2ban etc.)"       harden_kali              "Hardening"
+  track_step "Install base tools"                install_base_tools       "Packages"
+  track_step "Install pipx and Python tools"     install_pipx_and_tools   "Packages"
+  track_step "Normalise PATH"                    normalise_paths          "System"
+  track_step "Prepare /opt tree"                 prepare_opt_tree         "Filesystem"
+  track_step "Clone git repos"                   clone_repos              "Repos"
+  track_step "Download pentest binaries"         download_binaries        "Downloads"
+  track_step "Install Burp Suite Professional"   install_burpsuite_pro    "Packages"
+  track_step "Update Nuclei templates"           update_nuclei_templates  "Tools"
+  track_step "Rotate SSH host keys"              rotate_ssh_keys          "Hardening"
+  track_step "Enable and harden SSH"             enable_ssh               "Services"
+  track_step "Enable RDP (xrdp)"                 enable_rdp               "Services"
+  track_step "Cleanup apt caches and info"       cleanup_and_info         "System"
 }
 
 # =========================================
@@ -564,14 +665,18 @@ menu() {
 
 main() {
   require_root
-  import_kali_key
   parse_args "$@"
 
   if [[ -z "$CHOICE" ]]; then
     menu
   fi
 
-  create_pentest_user
+  # Initialise the failure counter so it's always defined, even if no
+  # steps run (e.g. an invalid CHOICE falls through to the default case).
+  BUILD_FAILURE_COUNT=0
+
+  track_step "Import Kali archive signing key"  import_kali_key       "Setup"
+  track_step "Create pentest user"               create_pentest_user   "Setup"
 
   case "$CHOICE" in
     minimal)
@@ -594,6 +699,15 @@ main() {
       exit 1
       ;;
   esac
+
+  # Exit non-zero if any tracked step failed, so CI / the test harness can
+  # detect failures via the process exit code in addition to parsing the
+  # BUILD SUMMARY markers.
+  if (( BUILD_FAILURE_COUNT > 0 )); then
+    echo "[!] Build completed with ${BUILD_FAILURE_COUNT} failed step(s)."
+    exit 1
+  fi
+  exit 0
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
