@@ -73,6 +73,12 @@ $script:WingetPackages = @(
     @{ Id = "Microsoft.OpenJDK.21";                Version = "" }  # Unpinned: installer error 1601 with pinned version, use latest
     @{ Id = "Microsoft.Sysinternals.BGInfo";       Version = "4.33" }
     @{ Id = "PuTTY.PuTTY";                        Version = "" }  # Unpinned: cache errors with pinned version
+    @{ Id = "OpenVPNTechnologies.OpenVPN";         Version = "" }  # Unpinned: use latest
+    @{ Id = "RealVNC.VNCViewer";                   Version = "" }  # Unpinned: use latest
+    @{ Id = "MHNexus.HxD";                         Version = "" }  # Unpinned: use latest
+    # Initex.Proxifier removed — no ARM64 installer available (winget exit -1978335212)
+    @{ Id = "7zip.7zip";                           Version = "" }  # Unpinned: use latest
+    @{ Id = "WinSCP.WinSCP";                       Version = "" }  # Unpinned: use latest
     # ElementLabs.LMStudio removed — not needed for pentest workflow and ARM64 installer fails
     @{ Id = "OpenAI.Codex";                        Version = "0.95.0" }
 )
