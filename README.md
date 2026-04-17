@@ -3,7 +3,7 @@
 Automated build scripts for provisioning penetration testing workstations on Kali Linux and Windows 11.
 
 **Version:** Unreleased
-**Last updated:** 2026-02-04
+**Last updated:** 2026-04-17
 
 ## Overview
 
@@ -11,6 +11,8 @@ This repository contains two automated build scripts designed to rapidly deploy 
 
 - **Kali-build-script.sh** - Bash script for Kali Linux systems
 - **windows11-build-script.ps1** - PowerShell script for Windows 11 workstations
+
+Both scripts emit a structured `BUILD SUMMARY` at the end of the run so the Parallels test harness in `paulkwalton/testharness` can parse pass/fail/skipped results consistently across both platforms.
 
 ## Kali-build-script.sh
 
@@ -154,9 +156,12 @@ PowerShell script for provisioning Windows 11 penetration testing workstations. 
 - Installs penetration testing tools via winget
 - Downloads Burp Suite extensions, Sysinternals tools, and Nessus updates
 - Enables all RSAT (Remote Server Administration Tools) features
+- Retries transient winget install failures automatically
+- Skips unsupported RSAT capabilities on Windows ARM64 images when they are not available
 - Optional Windows 11 v25H2 Security Baseline application
 - Windows Defender exclusion for C:\tools directory
 - Firewall configuration for RDP access
+- Structured build-result tracking with a final machine-parseable summary
 
 ### Prerequisites
 
@@ -201,7 +206,11 @@ The script executes automatically and performs all configured tasks sequentially
 - OpenJDK 21
 - BGInfo
 - PuTTY
-- LM Studio
+- OpenVPN
+- RealVNC Viewer
+- HxD
+- 7-Zip
+- WinSCP
 - OpenAI Codex
 
 **Downloaded to C:\tools:**
@@ -219,6 +228,12 @@ The script executes automatically and performs all configured tasks sequentially
   - Logger++
   - Retire.JS
 - Nessus updates (10.9.4)
+
+**Notable packaging choices:**
+- `Nmap`, `Chrome`, `OpenJDK 21`, `PuTTY`, `OpenVPN`, `RealVNC Viewer`, `HxD`, `7-Zip`, and `WinSCP` are intentionally unpinned and install the latest available version
+- `LM Studio` has been removed from the Windows build
+- `Microsoft.Sysinternals.Suite` is handled by direct download instead of winget because the winget package is not reliable on Windows ARM64
+- `Rsat.StorageReplica.Tools~~~~0.0.1.0` is skipped on Windows ARM64 images when the capability is unavailable
 
 ### Security Baseline
 
@@ -244,6 +259,8 @@ To enable:
 - `Install-WindowsSecurityBaselineNonDomainJoined` - Applies Microsoft security baseline (optional)
 - `Download-PentestTool` - Downloads tools to C:\tools using parallel jobs
 - `Enable-AllRSATTools` - Installs all Remote Server Administration Tools
+- `Install-WingetPackages` - Resets winget sources, retries transient failures, and records structured results
+- `Write-BuildSummary` - Emits the final success/failed/skipped summary used by the test harness
 
 ### Post-Installation
 
@@ -258,6 +275,7 @@ To enable:
 
 - Windows Firewall is disabled by default for testing convenience - **not recommended for production**
 - C:\tools is excluded from Windows Defender scanning
+- The script is designed for disposable pentest workstations and lab images, not hardened production endpoints
 - IPv6 is disabled - may affect dual-stack network environments
 - Security baseline application is commented out - review before enabling
 - Script runs tools downloaded from the internet - verify sources before use
