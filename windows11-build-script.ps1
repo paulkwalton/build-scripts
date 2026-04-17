@@ -101,6 +101,10 @@ $script:PentestDownloads = @(
 )
 
 $script:BuildResults = [System.Collections.ArrayList]::new()
+$script:IsWindowsArm64 = $env:PROCESSOR_ARCHITECTURE -eq 'ARM64'
+$script:SkippedRsatCapabilitiesOnArm64 = @(
+    'Rsat.StorageReplica.Tools~~~~0.0.1.0'
+)
 
 # =========================================
 # Helper Functions
@@ -409,6 +413,11 @@ function Enable-AllRSATTools {
     try {
         $rsatCapabilities = Get-WindowsCapability -Online | Where-Object { $_.Name -like 'Rsat.*' }
         foreach ($cap in $rsatCapabilities) {
+            if ($script:IsWindowsArm64 -and $cap.Name -in $script:SkippedRsatCapabilitiesOnArm64) {
+                Write-Host "[*] Skipping $($cap.Name) on Windows ARM64: capability is not available on this image." -ForegroundColor DarkGray
+                Add-BuildResult -Category 'RSAT' -Item $cap.Name -Status 'Skipped' -Detail 'Skipped on Windows ARM64 image'
+                continue
+            }
             if ($cap.State -ne 'Installed') {
                 Write-Host "[*] Installing $($cap.Name)..." -ForegroundColor DarkCyan
                 try {
@@ -442,6 +451,7 @@ function Enable-AllRSATTools {
 
 function Install-WingetPackages {
     Write-Host "`n[+] Installing packages via winget..." -ForegroundColor Cyan
+    $maxAttempts = 3
 
     # Reset and update winget sources to avoid stale source errors (-1978335157)
     Write-Host "[*] Resetting winget sources..." -ForegroundColor DarkCyan
@@ -468,21 +478,47 @@ function Install-WingetPackages {
             Write-Host "[*] Installing $id (latest)..." -ForegroundColor DarkCyan
         }
 
-        try {
-            $process = Start-Process -FilePath 'winget' -ArgumentList $wingetArgs -Wait -PassThru -NoNewWindow
-            if ($process.ExitCode -eq 0) {
-                Write-Host "[OK] Installed $id." -ForegroundColor Green
-                Add-BuildResult -Category 'Winget' -Item $id -Status 'Success'
-            } elseif ($process.ExitCode -eq -1978335189) {
-                Write-Host "[OK] $id already installed." -ForegroundColor Green
-                Add-BuildResult -Category 'Winget' -Item $id -Status 'Success' -Detail 'Already installed'
-            } else {
-                Write-Host "[X] Failed to install $id (exit code: $($process.ExitCode))." -ForegroundColor Red
-                Add-BuildResult -Category 'Winget' -Item $id -Status 'Failed' -Detail "Exit code: $($process.ExitCode)"
+        $installSucceeded = $false
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            try {
+                if ($attempt -gt 1) {
+                    Write-Host "[!] Retrying $id (attempt $attempt of $maxAttempts)..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 10
+                }
+
+                $process = Start-Process -FilePath 'winget' -ArgumentList $wingetArgs -Wait -PassThru -NoNewWindow
+                if ($process.ExitCode -eq 0) {
+                    Write-Host "[OK] Installed $id." -ForegroundColor Green
+                    Add-BuildResult -Category 'Winget' -Item $id -Status 'Success'
+                    $installSucceeded = $true
+                    break
+                }
+
+                if ($process.ExitCode -eq -1978335189) {
+                    Write-Host "[OK] $id already installed." -ForegroundColor Green
+                    Add-BuildResult -Category 'Winget' -Item $id -Status 'Success' -Detail 'Already installed'
+                    $installSucceeded = $true
+                    break
+                }
+
+                if ($attempt -eq $maxAttempts) {
+                    Write-Host "[X] Failed to install $id (exit code: $($process.ExitCode))." -ForegroundColor Red
+                    Add-BuildResult -Category 'Winget' -Item $id -Status 'Failed' -Detail "Exit code: $($process.ExitCode)"
+                } else {
+                    Write-Host "[!] $id install attempt $attempt failed with exit code $($process.ExitCode)." -ForegroundColor Yellow
+                }
+            } catch {
+                if ($attempt -eq $maxAttempts) {
+                    Write-Host ("[X] Exception installing {0}: {1}" -f $id, $_.Exception.Message) -ForegroundColor Red
+                    Add-BuildResult -Category 'Winget' -Item $id -Status 'Failed' -Detail $_.Exception.Message
+                } else {
+                    Write-Host ("[!] Exception installing {0} on attempt {1}: {2}" -f $id, $attempt, $_.Exception.Message) -ForegroundColor Yellow
+                }
             }
-        } catch {
-            Write-Host "[X] Exception installing ${id}: $($_.Exception.Message)" -ForegroundColor Red
-            Add-BuildResult -Category 'Winget' -Item $id -Status 'Failed' -Detail $_.Exception.Message
+        }
+
+        if (-not $installSucceeded) {
+            continue
         }
     }
     Write-Host "[+] Winget installation complete." -ForegroundColor Yellow
