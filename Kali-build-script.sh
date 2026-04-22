@@ -105,9 +105,47 @@ update_system() {
 
 enable_ssh() {
   echo "[*] Ensuring SSH server is installed and enabled..."
-  apt install -y openssh-server
+  apt install -y openssh-server || {
+    echo "[!] Failed to install openssh-server"
+    return 1
+  }
   systemctl enable --now ssh.service
   harden_ssh
+
+  # Give sshd a moment to (re)bind after the hardening reload/restart.
+  sleep 2
+
+  # Runtime verification: mirror the RDP check so a broken SSH deployment
+  # fails the build step instead of silently shipping a host nobody can
+  # reach over the network.
+  local ssh_ok=1
+
+  if ! systemctl is-active --quiet ssh; then
+    echo "[X] ssh.service is not active after enable/restart"
+    systemctl status ssh --no-pager | sed 's/^/    /' || true
+    ssh_ok=0
+  fi
+
+  local listening=""
+  if command -v ss >/dev/null 2>&1; then
+    listening="$(ss -H -ltn 'sport = :22' 2>/dev/null || true)"
+  elif command -v netstat >/dev/null 2>&1; then
+    listening="$(netstat -ltn 2>/dev/null | awk '$4 ~ /:22$/ {print}')"
+  fi
+
+  if [[ -z "$listening" ]]; then
+    echo "[X] Nothing is listening on TCP 22"
+    ssh_ok=0
+  else
+    echo "[*] sshd is listening on TCP 22: $(echo "$listening" | head -1 | tr -s ' ')"
+  fi
+
+  if (( ssh_ok == 0 )); then
+    echo "[X] SSH verification failed — sshd is not reachable on port 22"
+    return 1
+  fi
+
+  echo "[OK] SSH verified: ssh.service active, listening on TCP 22"
 }
 
 harden_ssh() {
