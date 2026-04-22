@@ -45,9 +45,6 @@ track_step() {
   return 0
 }
 
-# Thin wrappers around inline apt commands so track_step can call them by name.
-_install_kali_core_meta()    { apt install -y kali-linux-core; }
-_install_kali_default_meta() { apt install -y kali-linux-default; }
 
 # =========================================
 # Utility
@@ -166,11 +163,53 @@ EOF
     sed -i 's|^port=vsock://-1:3389|port=3389|' /etc/xrdp/xrdp.ini
   fi
 
-  # Enable and start xrdp service
-  systemctl enable xrdp
+  # Enable and start xrdp service (both xrdp and xrdp-sesman are required
+  # for a working RDP session; xrdp alone just accepts the TCP connection).
+  systemctl enable xrdp xrdp-sesman
+  systemctl restart xrdp-sesman
   systemctl restart xrdp
 
-  echo "[*] RDP enabled on port 3389"
+  # Give the service a moment to bind before we probe it.
+  sleep 2
+
+  # Runtime verification: the step must fail loudly if xrdp is not active
+  # or not listening on TCP 3389. Without this, a broken service could
+  # silently ship and only be discovered when someone tries to connect.
+  local rdp_ok=1
+
+  if ! systemctl is-active --quiet xrdp; then
+    echo "[X] xrdp.service is not active after restart"
+    systemctl status xrdp --no-pager | sed 's/^/    /' || true
+    rdp_ok=0
+  fi
+
+  if ! systemctl is-active --quiet xrdp-sesman; then
+    echo "[X] xrdp-sesman.service is not active after restart"
+    systemctl status xrdp-sesman --no-pager | sed 's/^/    /' || true
+    rdp_ok=0
+  fi
+
+  # Port listen check via ss (preferred) with netstat fallback.
+  local listening=""
+  if command -v ss >/dev/null 2>&1; then
+    listening="$(ss -H -ltn 'sport = :3389' 2>/dev/null || true)"
+  elif command -v netstat >/dev/null 2>&1; then
+    listening="$(netstat -ltn 2>/dev/null | awk '$4 ~ /:3389$/ {print}')"
+  fi
+
+  if [[ -z "$listening" ]]; then
+    echo "[X] Nothing is listening on TCP 3389"
+    rdp_ok=0
+  else
+    echo "[*] xrdp is listening on TCP 3389: $(echo "$listening" | head -1 | tr -s ' ')"
+  fi
+
+  if (( rdp_ok == 0 )); then
+    echo "[X] RDP verification failed — xrdp is not reachable on port 3389"
+    return 1
+  fi
+
+  echo "[OK] RDP verified: xrdp + xrdp-sesman active, listening on TCP 3389"
 }
 
 normalise_paths() {
@@ -587,22 +626,6 @@ final_summary_and_warnings() {
 # Install type meta
 # =========================================
 
-install_kali_minimal() {
-  track_step "Update system"                     update_system            "System"
-  track_step "Install Kali core metapackage"     _install_kali_core_meta  "Packages"
-  track_step "Normalise PATH"                    normalise_paths          "System"
-  track_step "Enable and harden SSH"             enable_ssh               "Services"
-  track_step "Enable RDP (xrdp)"                 enable_rdp               "Services"
-}
-
-install_kali_default() {
-  track_step "Update system"                     update_system               "System"
-  track_step "Install Kali default metapackage"  _install_kali_default_meta  "Packages"
-  track_step "Normalise PATH"                    normalise_paths             "System"
-  track_step "Enable and harden SSH"             enable_ssh                  "Services"
-  track_step "Enable RDP (xrdp)"                 enable_rdp                  "Services"
-}
-
 full_install() {
   track_step "Update system"                     update_system            "System"
   track_step "Harden Kali (fail2ban etc.)"       harden_kali              "Hardening"
@@ -621,26 +644,30 @@ full_install() {
 }
 
 # =========================================
-# CLI flags & menu
+# CLI flags
 # =========================================
-
-CHOICE=""
+#
+# The script is non-interactive: it always runs the full build. The only
+# flags accepted are --skip-burp-pro (skip the Burp Suite Pro download) and
+# --full / --help. --full is a backwards-compatible no-op retained so
+# existing automation (including the Parallels test harness, which passes
+# KALI_INSTALL_MODE=--full) keeps working without modification.
 
 usage() {
   cat <<EOF
-Usage: $0 [--minimal|--default|--full] [--skip-burp-pro]
-If no install flag is provided, an interactive menu will appear.
-  --minimal        Minimal Kali (kali-linux-core) + SSH + RDP + PATH normalisation
-  --default        Default Kali (kali-linux-default) + SSH + RDP + PATH normalisation
-  --full           Full build (hardening, tools, repos, Nuclei, PostgreSQL, SSH, RDP)
-  --skip-burp-pro  Skip Burp Suite Professional download and installation
+Usage: $0 [--full] [--skip-burp-pro]
+Runs the full Kali build non-interactively: hardening, tools, repos,
+Nuclei, PostgreSQL, SSH, RDP, and cleanup.
+  --full           Backwards-compatible no-op (full is the only mode).
+  --skip-burp-pro  Skip Burp Suite Professional download and installation.
+  -h, --help       Show this help and exit.
 EOF
 }
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --minimal|--default|--full) CHOICE="${1#--}"; shift ;;
+      --full) shift ;;                       # accepted for back-compat, no-op
       --skip-burp-pro) SKIP_BURP_PRO=1; shift ;;
       -h|--help) usage; exit 0 ;;
       *) echo "Unknown option: $1"; usage; exit 1 ;;
@@ -648,57 +675,19 @@ parse_args() {
   done
 }
 
-menu() {
-  echo
-  echo "Select installation type:"
-  echo "1) Minimal Kali install (kali-linux-core only)"
-  echo "2) Default Kali install (kali-linux-default)"
-  echo "3) Full Kali install (hardening + extras + Nuclei update)"
-  read -rp "Enter choice [1-3]: " choice
-  case "$choice" in
-    1) CHOICE="minimal" ;;
-    2) CHOICE="default" ;;
-    3) CHOICE="full" ;;
-    *) echo "Invalid choice"; exit 1 ;;
-  esac
-}
-
 main() {
   require_root
   parse_args "$@"
 
-  if [[ -z "$CHOICE" ]]; then
-    menu
-  fi
-
-  # Initialise the failure counter so it's always defined, even if no
-  # steps run (e.g. an invalid CHOICE falls through to the default case).
+  # Initialise the failure counter so it's always defined.
   BUILD_FAILURE_COUNT=0
 
   track_step "Import Kali archive signing key"  import_kali_key       "Setup"
   track_step "Create pentest user"               create_pentest_user   "Setup"
 
-  case "$CHOICE" in
-    minimal)
-      install_kali_minimal
-      final_summary_and_warnings
-      echo "[+] Minimal install complete."
-      ;;
-    default)
-      install_kali_default
-      final_summary_and_warnings
-      echo "[+] Default install complete."
-      ;;
-    full)
-      full_install
-      final_summary_and_warnings
-      echo "[+] Full install complete."
-      ;;
-    *)
-      usage
-      exit 1
-      ;;
-  esac
+  full_install
+  final_summary_and_warnings
+  echo "[+] Full install complete."
 
   # Exit non-zero if any tracked step failed, so CI / the test harness can
   # detect failures via the process exit code in addition to parsing the

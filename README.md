@@ -18,11 +18,13 @@ Both scripts emit a structured `BUILD SUMMARY` at the end of the run so the Para
 
 ### Description
 
-Comprehensive Kali Linux provisioning script with three installation modes. Automates system hardening, tool installation, repository cloning, and service configuration for penetration testing environments.
+Comprehensive Kali Linux provisioning script. Runs non-interactively and
+performs a full pentest-ready build: system hardening, tool installation,
+repository cloning, and service configuration.
 
 ### Features
 
-- Three installation modes: Minimal, Default, and Full
+- Non-interactive, end-to-end full build (no menu, no prompts)
 - Automated pentest user creation with secure password generation
 - SSH server installation and hardening
 - RDP access via xrdp with Xfce desktop configuration
@@ -35,33 +37,13 @@ Comprehensive Kali Linux provisioning script with three installation modes. Auto
 - Service disabling for unused daemons
 - Comprehensive tool and repository installation
 
-### Installation Modes
+### Installation
 
-#### 1. Minimal Install
 ```bash
-sudo ./Kali-build-script.sh --minimal
+sudo ./Kali-build-script.sh
 ```
-- Installs `kali-linux-core` package
-- Enables SSH with hardening
-- Enables RDP access
-- Normalizes PATH variables
-- Creates pentest user account
 
-#### 2. Default Install
-```bash
-sudo ./Kali-build-script.sh --default
-```
-- Installs `kali-linux-default` package (standard Kali tools)
-- Enables SSH with hardening
-- Enables RDP access
-- Normalizes PATH variables
-- Creates pentest user account
-
-#### 3. Full Install
-```bash
-sudo ./Kali-build-script.sh --full
-```
-Includes everything from minimal/default plus:
+Runs the full build unattended. The script performs:
 - System hardening (fail2ban, unattended-upgrades)
 - Extensive tool installation via apt
 - Python tools via pipx (certipy-ad, sublist3r, dirsearch, eyewitness, mitm6, hashid, spray) and pip (`pyftpdlib`, `Cython`, `pysmb`)
@@ -72,7 +54,13 @@ Includes everything from minimal/default plus:
 - PostgreSQL service enablement
 - Service cleanup and system hardening
 
-### Tools Installed (Full Mode)
+### Flags
+
+- `--skip-burp-pro` — skip the Burp Suite Professional download/install step
+- `--full` — backwards-compatible no-op (full is the only mode)
+- `-h`, `--help` — show usage and exit
+
+### Tools Installed
 
 **Core Packages:**
 - curl, wget, ca-certificates, git, jq, build-essential, macchanger
@@ -92,17 +80,6 @@ Includes everything from minimal/default plus:
 
 **Pip Packages:**
 - pyftpdlib, Cython, pysmb
-
-### Interactive Mode
-
-Run without flags for an interactive menu:
-```bash
-sudo ./Kali-build-script.sh
-```
-You'll be prompted to select:
-1. Minimal Kali install
-2. Default Kali install
-3. Full Kali install
 
 ### Prerequisites
 
