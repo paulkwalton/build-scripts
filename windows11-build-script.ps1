@@ -52,7 +52,7 @@ $script:LgpoExpectedHash = "C17690302A72FA2B48D31F7BC57B75A73C391F633BE1E9F2BB92
 $script:WingetPackages = @(
     @{ Id = "Microsoft.WindowsTerminal";          Version = "1.23.20211.0" }
     @{ Id = "Iterate.Cyberduck";                   Version = "9.3.1.44136" }
-    @{ Id = "Tenable.Nessus";                      Version = "10.11.3.20047" }
+    @{ Id = "Tenable.Nessus";                      Version = "10.12.0.20184"; AllowLatestFallback = $true }
     @{ Id = "PortSwigger.BurpSuite.Professional";  Version = "2025.12.4" }
     @{ Id = "Insecure.Nmap";                       Version = "" }  # Unpinned: v7.80 download returns 403, use latest
     @{ Id = "WiresharkFoundation.Wireshark";       Version = "4.6.3" }
@@ -452,16 +452,17 @@ function Enable-AllRSATTools {
 function Install-WingetPackages {
     Write-Host "`n[+] Installing packages via winget..." -ForegroundColor Cyan
     $maxAttempts = 3
+    $noVersionExitCode = -1978335209
 
     # Reset and update winget sources to avoid stale source errors (-1978335157)
     Write-Host "[*] Resetting winget sources..." -ForegroundColor DarkCyan
-    $resetProcess = Start-Process -FilePath 'winget' -ArgumentList @('source', 'reset', '--force', '--accept-source-agreements') -Wait -PassThru -NoNewWindow
+    $resetProcess = Start-Process -FilePath 'winget' -ArgumentList @('source', 'reset', '--force') -Wait -PassThru -NoNewWindow
     if ($resetProcess.ExitCode -ne 0) {
         Write-Host "[!] winget source reset returned exit code $($resetProcess.ExitCode)." -ForegroundColor Yellow
     }
 
     Write-Host "[*] Updating winget sources..." -ForegroundColor DarkCyan
-    $sourceUpdateProcess = Start-Process -FilePath 'winget' -ArgumentList @('source', 'update', '--accept-source-agreements') -Wait -PassThru -NoNewWindow
+    $sourceUpdateProcess = Start-Process -FilePath 'winget' -ArgumentList @('source', 'update') -Wait -PassThru -NoNewWindow
     if ($sourceUpdateProcess.ExitCode -ne 0) {
         Write-Host "[!] winget source update returned exit code $($sourceUpdateProcess.ExitCode)." -ForegroundColor Yellow
     }
@@ -469,6 +470,7 @@ function Install-WingetPackages {
     foreach ($pkg in $script:WingetPackages) {
         $id = $pkg.Id
         $version = $pkg.Version
+        $allowLatestFallback = $pkg.ContainsKey('AllowLatestFallback') -and [bool]$pkg.AllowLatestFallback
 
         $wingetArgs = @('install', '-e', '--id', $id, '--accept-package-agreements', '--accept-source-agreements', '--silent')
         if ($version) {
@@ -499,6 +501,14 @@ function Install-WingetPackages {
                     Add-BuildResult -Category 'Winget' -Item $id -Status 'Success' -Detail 'Already installed'
                     $installSucceeded = $true
                     break
+                }
+
+                if ($version -and $allowLatestFallback -and $process.ExitCode -eq $noVersionExitCode) {
+                    Write-Host "[!] $id version $version is unavailable from winget; falling back to latest." -ForegroundColor Yellow
+                    $version = ''
+                    $wingetArgs = @('install', '-e', '--id', $id, '--accept-package-agreements', '--accept-source-agreements', '--silent')
+                    $attempt = 0
+                    continue
                 }
 
                 if ($attempt -eq $maxAttempts) {
